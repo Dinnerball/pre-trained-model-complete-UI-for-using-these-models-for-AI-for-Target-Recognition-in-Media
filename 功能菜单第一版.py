@@ -7,7 +7,6 @@ from PyQt6.QtCore import Qt
 #from PyQt6.QtWidgets.QMainWindow import centralWidget
 from matplotlib import pyplot as plt
 from PIL import Image
-from torchvision import transforms
 import torch.nn.functional as F
 from PIL import ImageDraw,ImageFont
 import time
@@ -16,6 +15,12 @@ import mmcv
 import cv2
 import shutil
 import numpy as np
+from torchcam.utils import overlay_mask
+from torchcam.methods import GradCAMpp
+from torchvision import transforms
+            # 测试集图像预处理-RCTN：缩放、裁剪、转 Tensor、归一化
+            # CAM GradCAM GradCAMpp ISCAM LayerCAM SSCAM ScoreCAM SmoothGradCAMpp XGradCAM
+
 #font = ImageFont.truetype('SimHei.ttf', 32)
 
 class Menu(QMainWindow):
@@ -145,7 +150,11 @@ class Menu(QMainWindow):
         model_path = selected_items[0].text()
         print(f"加载模型: {model_path}")
 
-        model = torch.load(model_path)
+        model = torch.load(
+            model_path,
+            map_location=device,
+            weights_only=False
+        )
         model = model.eval().to(device)
 
         print(selected_images)
@@ -212,6 +221,25 @@ class Menu(QMainWindow):
             plt.tight_layout()
             fig.savefig('output/prediction+bar_chart.jpg')
             self.imageDis2.setPixmap(QPixmap('output/prediction+bar_chart.jpg').scaled(450, 300))
+
+
+
+            #model = model.eval().to(device)
+            cam_extractor = GradCAMpp(model)
+            cam_test_transform = self.get_test_transform()
+            #运行图像分类预测
+            cam_img_path = str(selected_images[0].text())
+            cam_img_pil = Image.open(cam_img_path)
+            input_tensor = cam_test_transform(cam_img_pil).unsqueeze(0).to(device)  # 预处理
+            pred_logits = model(input_tensor)
+            pred_id = torch.topk(pred_logits, 1)[1].detach().cpu().numpy().squeeze().item()
+
+            activation_map = cam_extractor(pred_id, pred_logits)
+            activation_map = activation_map[0][0].detach().cpu().numpy()
+
+            result = overlay_mask(img_pil, Image.fromarray(activation_map), alpha=0.7)
+            result.save('output/predictionCam.png')
+            self.imageCam.setPixmap(QPixmap('output/predictionCam.png').scaled(450, 300))
 
 
             
@@ -328,6 +356,7 @@ class Menu(QMainWindow):
 
         self.imageDis1 = QLabel()
         self.imageDis2 = QLabel()
+        self.imageCam = QLabel()
 
 
         btn_layout.addWidget(btn_load_model)
@@ -339,6 +368,7 @@ class Menu(QMainWindow):
         image_layout.addWidget(self.list_image_widget)
         image_layout.addWidget(self.imageDis1)
         image_layout.addWidget(self.imageDis2)
+        image_layout.addWidget(self.imageCam)
 
         main_layout.addLayout(btn_layout)
         main_layout.addLayout(image_layout)
